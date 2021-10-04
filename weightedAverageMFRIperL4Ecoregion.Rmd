@@ -1,0 +1,143 @@
+---
+title: "MFRI by EPA L4 Ecoregion map"
+author: "The Nature Conservancy's LANDFIRE team"
+date: "10/1/2021"
+output: html_document
+---
+
+
+# Goal
+Make map of weighted average MFRI per EPA Level 4 Ecoregions with the following schema:
+
+*from Joe Fargione*
+Frequent (0-5 years)
+Common (6-15 years)
+Episodic (16-35 years)
+infrequent (36-100 years)
+Rare (100+)
+
+
+# Methods (not the cleanest!)
+
+1. Converted EPA Level 4 Ecoregions Shapefile to Raster, reprojected to LF BpS projection
+2. Combined LF200 BpS with ecoregions raster
+3. Joined attributes to combined raster
+4. Exported attributes to Excel
+5. Cleaned attributes in Excel Pivot Table (e.g., retained on the columns I needed, removed NAs as we didn't want them to "contribute" to the average)
+6. Moved to R to calculate weighted means using https://datacornering.com/how-to-calculate-weighted-mean-in-r/
+
+
+# The work
+
+Libraries, read in data
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+
+df<- read_csv("epa_bps_mfri_count.csv")
+#View(df)
+
+```
+
+COUNT are the weights, and  MFRI are the values being averaged.  THere should be 967 rows when finished (to match number of ecoregions by L4code)
+
+```{r}
+weightedAverages <- df %>%
+  group_by(epa_value) %>%
+  summarise(mfri = weighted.mean(mfri_all, count))
+```
+
+looks OK.  need to create categories.  
+
+Frequent (0-5 years)
+Common (6-15 years)
+Episodic (16-35 years)
+infrequent (36-100 years)
+Rare (100+)
+
+```{r}
+weightedAverages$labels <- cut(weightedAverages$mfri,
+                               breaks = c(-Inf, 5, 15, 35, 100, Inf),
+                               labels = c("Frequent (0-5 years)",
+                                          "Common (6-15 years)",
+                                          "Episodic (16-35 years)",
+                                          "Infrequent (36-100 years)",
+                                          "Rare (100+)")
+)
+```
+
+
+
+
+1. read in shapefile
+2. join in mfri 
+3. map in leaflet!  Try to use different projection than the WGS84!
+
+read in and project shapefile for leaflet 
+```{r}
+library(sf)
+library(sp)
+ecoregions <- st_read("epaL4singlePart.shp")
+format(object.size(ecoregions), units = "Mb")
+
+ecoregions84 <- st_transform(ecoregions, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+format(object.size(ecoregions84), units = "Mb")
+
+outerUS <- st_read("USouter.shp")
+outerUS <- st_transform(outerUS, CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"))
+
+
+```
+
+join data
+
+```{r}
+ecoregions84mfri <- merge(ecoregions84, weightedAverages, by.x="gridcodesm", by.y = "epa_value")
+
+format(object.size(ecoregions84mfri), units = "Mb")
+```
+
+make map
+
+```{r}
+library(leaflet)
+library(RColorBrewer)
+library(viridis)
+
+#make palette
+pal <- colorFactor(palette = c('#993404','#d95f0e','#fe9929','#fed98e','#ffffd4'),
+                   levels = c("Frequent (0-5 years)",
+                              "Common (6-15 years)",
+                              "Episodic (16-35 years)",
+                              "Infrequent (36-100 years)",
+                              "Rare (100+)"))
+
+
+
+mfriMap <- leaflet() %>%
+  setView(-96, 37.8, 5) %>%
+  addProviderTiles(providers$Esri.WorldShadedRelief) %>%
+  addPolygons(data = ecoregions84mfri,
+              fillColor = ~pal(labels),
+              fillOpacity = 0.9,
+              weight = 0.5,
+              color = "#a1a3a6",
+              opacity = 0.8) %>%
+  addLegend(pal = pal,
+            values = ecoregions84mfri$labels,
+            position = "bottomleft",
+            title = "Historical Mean Fire Return Interval",
+            opacity = 1)
+
+mfriMap
+
+library(htmlwidgets)
+saveWidget(mfriMap, 'mfriMap.html')
+
+```
+
+
+
+
+
+
+
